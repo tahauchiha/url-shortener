@@ -1,0 +1,9 @@
+CREATE SEQUENCE urls_id_seq START 100000000000;
+
+CREATE TABLE urls (
+  id         BIGINT PRIMARY KEY,
+  short_code VARCHAR(16) UNIQUE NOT NULL,
+  long_url   TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  expires_at TIMESTAMPTZ
+);
