@@ -14,20 +14,48 @@ const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379");
 const app = express();
 app.use(express.json());
 
-const body = z.object({ url: z.string().url() });
+const body = z.object({
+  url: z.string().url(),
+  alias: z.string().regex(/^[a-zA-Z0-9_-]{3,16}$/).optional(),
+  expiresInDays: z.number().int().positive().max(365).optional(),
+});
+
+const RESERVED = new Set(["api", "health", "admin"]);
 
 app.post("/api/shorten", async (req, res) => {
   const parsed = body.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid URL" });
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request", details: parsed.error.issues });
+  }
+  const { url, alias, expiresInDays } = parsed.data;
+
+  if (alias && RESERVED.has(alias.toLowerCase())) {
+    return res.status(400).json({ error: "Alias is reserved" });
+  }
 
   const id = await allocator.nextId();
-  const code = encode(id);
+  const code = alias ?? encode(id);
+  const expiresAt = expiresInDays
+    ? new Date(Date.now() + expiresInDays * 86_400_000)
+    : null;
 
-  await pool.query(
-    "INSERT INTO urls (id, short_code, long_url) VALUES ($1, $2, $3)",
-    [id.toString(), code, parsed.data.url]
-  );
-  res.status(201).json({ shortCode: code, shortUrl: `http://localhost:3000/${code}` });
+  try {
+    await pool.query(
+      "INSERT INTO urls (id, short_code, long_url, expires_at) VALUES ($1, $2, $3, $4)",
+      [id.toString(), code, url, expiresAt]
+    );
+  } catch (err: any) {
+    if (err.code === "23505") {
+      return res.status(409).json({ error: "Alias already taken" });
+    }
+    throw err;
+  }
+
+  res.status(201).json({
+    shortCode: code,
+    shortUrl: `http://localhost:3000/${code}`,
+    expiresAt,
+  });
 });
 
 app.get("/:code", async (req, res) => {
@@ -37,13 +65,25 @@ app.get("/:code", async (req, res) => {
   if (cached) return res.redirect(302, cached);
 
   const { rows } = await pool.query(                       // 2. miss: go to DB
-    "SELECT long_url FROM urls WHERE short_code = $1 AND (expires_at IS NULL OR expires_at > now())",
+    "SELECT long_url, expires_at FROM urls WHERE short_code = $1 AND (expires_at IS NULL OR expires_at > now())",
     [code]
   );
   if (!rows.length) return res.status(404).json({ error: "Not found" });
+  const row = rows[0];
+let ttl = 3600;
+if (row.expires_at) {
+  const secondsLeft = Math.floor((new Date(row.expires_at).getTime() - Date.now()) / 1000);
+  ttl = Math.min(ttl, secondsLeft);
+}
+if (ttl > 0) await redis.set(`url:${code}`, row.long_url, "EX", ttl);
+res.redirect(302, row.long_url);
 
-  await redis.set(`url:${code}`, rows[0].long_url, "EX", 3600); // 3. fill cache
-  res.redirect(302, rows[0].long_url);
 });
-
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({ error: "Malformed JSON" });
+  }
+  console.error(err);
+  res.status(500).json({ error: "Internal server error" });
+});
 app.listen(3000, () => console.log("Listening on :3000"));
