@@ -1,3 +1,4 @@
+import { IdAllocator } from "./idAllocator";
 import express from "express";
 import { Pool } from "pg";
 import Redis from "ioredis";
@@ -8,6 +9,7 @@ const pool = new Pool({
   connectionString:
     process.env.DATABASE_URL ?? "postgres://app:app@localhost:5432/shortener",
 });
+const allocator = new IdAllocator(pool);
 const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379");
 const app = express();
 app.use(express.json());
@@ -18,8 +20,7 @@ app.post("/api/shorten", async (req, res) => {
   const parsed = body.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid URL" });
 
-  const { rows } = await pool.query("SELECT nextval('urls_id_seq') AS id");
-  const id = BigInt(rows[0].id);
+  const id = await allocator.nextId();
   const code = encode(id);
 
   await pool.query(
