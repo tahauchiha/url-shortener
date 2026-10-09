@@ -17,3 +17,14 @@ reach the server and analytics would undercount.
 ## Caching
 Cache-aside with Redis and a 1-hour TTL, capped at the link's expiry so
 expired links never keep redirecting from cache.
+
+## Negative caching
+Misses are cached as a sentinel value for 60 seconds so repeated requests
+for nonexistent codes don't reach Postgres. The key is deleted when a link
+is created, so a new alias works immediately.
+
+## Cache stampede protection
+On a cache miss, a request takes a short Redis lock (SET NX with 5s expiry).
+Only the lock holder queries Postgres; others poll the cache for up to 500ms,
+then fall back to the DB. The lock expiry prevents a crashed holder from
+blocking others. Trade-off: slight added latency for waiters on cold keys.

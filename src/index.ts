@@ -50,7 +50,7 @@ app.post("/api/shorten", async (req, res) => {
     }
     throw err;
   }
-
+  await redis.del(`url:${code}`);
   res.status(201).json({
     shortCode: code,
     shortUrl: `http://localhost:3000/${code}`,
@@ -58,27 +58,55 @@ app.post("/api/shorten", async (req, res) => {
   });
 });
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 app.get("/:code", async (req, res) => {
   const { code } = req.params;
 
-  const cached = await redis.get(`url:${code}`);          // 1. try cache
+  const cached = await redis.get(`url:${code}`);
+  if (cached === "__NOTFOUND__") return res.status(404).json({ error: "Not found" });
   if (cached) return res.redirect(302, cached);
 
-  const { rows } = await pool.query(                       // 2. miss: go to DB
-    "SELECT long_url, expires_at FROM urls WHERE short_code = $1 AND (expires_at IS NULL OR expires_at > now())",
-    [code]
-  );
-  if (!rows.length) return res.status(404).json({ error: "Not found" });
-  const row = rows[0];
-let ttl = 3600;
-if (row.expires_at) {
-  const secondsLeft = Math.floor((new Date(row.expires_at).getTime() - Date.now()) / 1000);
-  ttl = Math.min(ttl, secondsLeft);
-}
-if (ttl > 0) await redis.set(`url:${code}`, row.long_url, "EX", ttl);
-res.redirect(302, row.long_url);
+  // Only one request per code rebuilds the cache; others wait and re-read it
+  const lockKey = `lock:${code}`;
+  const gotLock = await redis.set(lockKey, "1", "EX", 5, "NX");
 
+  if (!gotLock) {
+    for (let i = 0; i < 10; i++) {
+      await sleep(50);
+      const again = await redis.get(`url:${code}`);
+      if (again === "__NOTFOUND__") return res.status(404).json({ error: "Not found" });
+      if (again) return res.redirect(302, again);
+    }
+    // lock holder was slow; fall through and query the DB ourselves
+  }
+
+  try {
+    //console.log("DB hit", code); // temporary, remove after testing
+
+    const { rows } = await pool.query(
+      "SELECT long_url, expires_at FROM urls WHERE short_code = $1 AND (expires_at IS NULL OR expires_at > now())",
+      [code]
+    );
+
+    if (!rows.length) {
+      await redis.set(`url:${code}`, "__NOTFOUND__", "EX", 60);
+      return res.status(404).json({ error: "Not found" });
+    }
+
+    const row = rows[0];
+    let ttl = 3600;
+    if (row.expires_at) {
+      const secondsLeft = Math.floor((new Date(row.expires_at).getTime() - Date.now()) / 1000);
+      ttl = Math.min(ttl, secondsLeft);
+    }
+    if (ttl > 0) await redis.set(`url:${code}`, row.long_url, "EX", ttl);
+    res.redirect(302, row.long_url);
+  } finally {
+    if (gotLock) await redis.del(lockKey);
+  }
 });
+
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err.type === "entity.parse.failed") {
     return res.status(400).json({ error: "Malformed JSON" });
