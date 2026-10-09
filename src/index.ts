@@ -23,7 +23,7 @@ const body = z.object({
 
 const RESERVED = new Set(["api", "health", "admin"]);
 // 5 creates per minute per IP, low on purpose so it's easy to test
-app.post("/api/shorten", slidingWindowLimiter(redis, { limit: 5, windowMs: 60_000 }));
+app.post("/api/shorten", slidingWindowLimiter(redis, { limit: 100, windowMs: 60_000 }));
 app.post("/api/shorten", async (req, res) => {
   const parsed = body.safeParse(req.body);
   if (!parsed.success) {

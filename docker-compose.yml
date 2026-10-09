@@ -11,3 +11,25 @@ services:
   redis:
     image: redis:7
     ports: ["6379:6379"]
+  app1:
+    build: .
+    environment:
+      DATABASE_URL: postgres://app:app@postgres:5432/shortener
+      REDIS_URL: redis://redis:6379
+      BASE_URL: http://localhost:8080
+    depends_on: [postgres, redis]
+
+  app2:
+    build: .
+    environment:
+      DATABASE_URL: postgres://app:app@postgres:5432/shortener
+      REDIS_URL: redis://redis:6379
+      BASE_URL: http://localhost:8080
+    depends_on: [postgres, redis]
+
+  nginx:
+    image: nginx:alpine
+    ports: ["8080:80"]
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on: [app1, app2]

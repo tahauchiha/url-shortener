@@ -28,3 +28,11 @@ On a cache miss, a request takes a short Redis lock (SET NX with 5s expiry).
 Only the lock holder queries Postgres; others poll the cache for up to 500ms,
 then fall back to the DB. The lock expiry prevents a crashed holder from
 blocking others. Trade-off: slight added latency for waiters on cold keys.
+
+## Rate limiting
+Sliding window log per client IP using a Redis sorted set, evaluated in a
+Lua script so check-and-add is atomic. Time is read from Redis (TIME) to
+avoid clock skew between app instances. Chosen over Fixed Window, which
+allows up to 2x the limit across a window boundary. Trade-off: memory is
+O(requests in window) per client; Token Bucket or a sliding-window counter
+would use less. The limiter fails open if Redis is unavailable.
