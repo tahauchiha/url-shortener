@@ -13,6 +13,7 @@ const pool = new Pool({
 const allocator = new IdAllocator(pool);
 const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379");
 const app = express();
+app.set("trust proxy", true); // for req.ip to work behind a reverse proxy
 app.use(express.json());
 
 const body = z.object({
@@ -55,7 +56,7 @@ app.post("/api/shorten", async (req, res) => {
   await redis.del(`url:${code}`);
   res.status(201).json({
     shortCode: code,
-    shortUrl: `http://localhost:3000/${code}`,
+    shortUrl: `${process.env.BASE_URL ?? "http://localhost:3000"}/${code}`,
     expiresAt,
   });
 });
@@ -64,7 +65,19 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 app.get("/:code", async (req, res) => {
   const { code } = req.params;
-
+  if (process.env.DISABLE_CACHE === "1") {
+    try {
+      const { rows } = await pool.query(
+        "SELECT long_url FROM urls WHERE short_code = $1 AND (expires_at IS NULL OR expires_at > now())",
+        [code]
+      );
+      if (!rows.length) return res.status(404).json({ error: "Not found" });
+      return res.redirect(302, rows[0].long_url);
+    } catch (err) {
+      console.error("no-cache path error", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }  
   const cached = await redis.get(`url:${code}`);
   if (cached === "__NOTFOUND__") return res.status(404).json({ error: "Not found" });
   if (cached) return res.redirect(302, cached);
@@ -85,7 +98,7 @@ app.get("/:code", async (req, res) => {
 
   try {
     //console.log("DB hit", code); // temporary, remove after testing
-
+    //console.log("hit", process.env.HOSTNAME);
     const { rows } = await pool.query(
       "SELECT long_url, expires_at FROM urls WHERE short_code = $1 AND (expires_at IS NULL OR expires_at > now())",
       [code]

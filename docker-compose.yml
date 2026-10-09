@@ -11,20 +11,25 @@ services:
   redis:
     image: redis:7
     ports: ["6379:6379"]
+
   app1:
     build: .
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://app:app@postgres:5432/shortener
       REDIS_URL: redis://redis:6379
       BASE_URL: http://localhost:8080
+      DISABLE_CACHE: ${DISABLE_CACHE:-0}
     depends_on: [postgres, redis]
 
   app2:
     build: .
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://app:app@postgres:5432/shortener
       REDIS_URL: redis://redis:6379
       BASE_URL: http://localhost:8080
+      DISABLE_CACHE: ${DISABLE_CACHE:-0}
     depends_on: [postgres, redis]
 
   nginx:

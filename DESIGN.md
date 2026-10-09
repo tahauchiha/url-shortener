@@ -36,3 +36,9 @@ avoid clock skew between app instances. Chosen over Fixed Window, which
 allows up to 2x the limit across a window boundary. Trade-off: memory is
 O(requests in window) per client; Token Bucket or a sliding-window counter
 would use less. The limiter fails open if Redis is unavailable.
+
+## Horizontal scaling
+Two stateless app instances behind Nginx (round robin). All shared state
+lives in Postgres and Redis. ID blocks are leased per instance so IDs never
+collide. The rate limiter reads time from Redis and uses X-Forwarded-For via
+trust proxy, so limits are enforced per real client across instances.
