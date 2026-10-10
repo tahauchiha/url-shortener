@@ -20,6 +20,7 @@ services:
       REDIS_URL: redis://redis:6379
       BASE_URL: http://localhost:8080
       DISABLE_CACHE: ${DISABLE_CACHE:-0}
+      RATE_LIMIT: ${RATE_LIMIT:-20}
     depends_on: [postgres, redis]
 
   app2:
@@ -30,6 +31,7 @@ services:
       REDIS_URL: redis://redis:6379
       BASE_URL: http://localhost:8080
       DISABLE_CACHE: ${DISABLE_CACHE:-0}
+      RATE_LIMIT: ${RATE_LIMIT:-20}
     depends_on: [postgres, redis]
 
   nginx:

@@ -48,3 +48,9 @@ Clicks are inserted asynchronously after the response is sent (res "finish"
 event), so redirect latency is unaffected. Failures are logged and dropped:
 analytics is best-effort. At higher volume this would move to batched inserts
 or a queue with worker consumers.
+
+## Client IP and rate limiting
+Nginx overwrites X-Forwarded-For with the real remote address, and Express
+uses trust proxy to read it. Appending to a client-supplied header would let
+callers spoof their IP and bypass the limiter. If another proxy is added in
+front of Nginx, this needs to be revisited.
