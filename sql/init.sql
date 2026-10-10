@@ -7,3 +7,11 @@ CREATE TABLE urls (
   created_at TIMESTAMPTZ DEFAULT now(),
   expires_at TIMESTAMPTZ
 );
+CREATE TABLE clicks (
+  id         BIGSERIAL PRIMARY KEY,
+  short_code VARCHAR(16) NOT NULL,
+  clicked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  referrer   TEXT,
+  user_agent TEXT
+);
+CREATE INDEX clicks_code_time_idx ON clicks (short_code, clicked_at);

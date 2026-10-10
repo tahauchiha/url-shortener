@@ -42,3 +42,9 @@ Two stateless app instances behind Nginx (round robin). All shared state
 lives in Postgres and Redis. ID blocks are leased per instance so IDs never
 collide. The rate limiter reads time from Redis and uses X-Forwarded-For via
 trust proxy, so limits are enforced per real client across instances.
+
+## Click analytics
+Clicks are inserted asynchronously after the response is sent (res "finish"
+event), so redirect latency is unaffected. Failures are logged and dropped:
+analytics is best-effort. At higher volume this would move to batched inserts
+or a queue with worker consumers.

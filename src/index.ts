@@ -62,7 +62,25 @@ app.post("/api/shorten", async (req, res) => {
 });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+function recordClick(code: string, referrer?: string, userAgent?: string) {
+  // Fire and forget: the redirect never waits for this insert
+  pool
+    .query(
+      "INSERT INTO clicks (short_code, referrer, user_agent) VALUES ($1, $2, $3)",
+      [code, referrer ?? null, userAgent ?? null]
+    )
+    .catch((err) => console.error("click insert failed", err));
+}
 
+// Runs for every GET /:code, records only successful redirects
+app.get("/:code", (req, res, next) => {
+  res.on("finish", () => {
+    if (res.statusCode === 302) {
+      recordClick(req.params.code, req.get("referer"), req.get("user-agent"));
+    }
+  });
+  next();
+});
 app.get("/:code", async (req, res) => {
   const { code } = req.params;
   if (process.env.DISABLE_CACHE === "1") {
@@ -120,6 +138,34 @@ app.get("/:code", async (req, res) => {
   } finally {
     if (gotLock) await redis.del(lockKey);
   }
+});
+
+app.get("/api/stats/:code", async (req, res) => {
+  const { code } = req.params;
+
+  const [total, perDay, referrers] = await Promise.all([
+    pool.query("SELECT count(*)::int AS n FROM clicks WHERE short_code = $1", [code]),
+    pool.query(
+      `SELECT date_trunc('day', clicked_at)::date AS day, count(*)::int AS clicks
+       FROM clicks
+       WHERE short_code = $1 AND clicked_at > now() - interval '30 days'
+       GROUP BY day ORDER BY day`,
+      [code]
+    ),
+    pool.query(
+      `SELECT coalesce(referrer, 'direct') AS referrer, count(*)::int AS clicks
+       FROM clicks WHERE short_code = $1
+       GROUP BY 1 ORDER BY clicks DESC LIMIT 5`,
+      [code]
+    ),
+  ]);
+
+  res.json({
+    shortCode: code,
+    totalClicks: total.rows[0].n,
+    clicksPerDay: perDay.rows,
+    topReferrers: referrers.rows,
+  });
 });
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
