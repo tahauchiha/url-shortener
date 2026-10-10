@@ -1,3 +1,4 @@
+import path from "path";
 import { slidingWindowLimiter } from "./rateLimiter";
 import { IdAllocator } from "./idAllocator";
 import express from "express";
@@ -15,7 +16,7 @@ const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379");
 const app = express();
 app.set("trust proxy", true); // for req.ip to work behind a reverse proxy
 app.use(express.json());
-
+app.use(express.static(path.join(__dirname, "../public")));
 const body = z.object({
   url: z.string().url(),
   alias: z.string().regex(/^[a-zA-Z0-9_-]{3,16}$/).optional(),

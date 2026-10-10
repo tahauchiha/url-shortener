@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>URL Shortener</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
+    h1 { margin-bottom: 4px; }
+    p.sub { color: #666; margin-top: 0; }
+    form, .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin: 16px 0; }
+    label { display: block; font-size: 14px; margin: 10px 0 4px; }
+    input { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #bbb; border-radius: 6px; font-size: 15px; }
+    button { margin-top: 14px; padding: 9px 16px; border: 0; border-radius: 6px; background: #2563eb; color: #fff; font-size: 15px; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: default; }
+    .error { color: #b91c1c; margin-top: 10px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .bar-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 13px; }
+    .bar { background: #2563eb; height: 14px; border-radius: 3px; min-width: 2px; }
+    .muted { color: #666; font-size: 14px; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111; color: #eee; }
+      form, .card, input { border-color: #444; background: #1b1b1b; color: #eee; }
+      p.sub, .muted { color: #aaa; }
+    }
+  </style>
+</head>
+<body>
+  <h1>URL Shortener</h1>
+  <p class="sub">Redis cache-aside, rate limited, with click stats.</p>
+
+  <form id="form">
+    <label for="url">Long URL</label>
+    <input id="url" type="url" placeholder="https://example.com/very/long/link" required>
+    <label for="alias">Custom alias (optional, 3 to 16 characters)</label>
+    <input id="alias" pattern="[a-zA-Z0-9_\-]{3,16}" placeholder="my-link">
+    <label for="days">Expires in days (optional, 1 to 365)</label>
+    <input id="days" type="number" min="1" max="365">
+    <button id="submit" type="submit">Shorten</button>
+    <div id="error" class="error"></div>
+  </form>
+
+  <div id="result" class="card" hidden>
+    <div class="row">
+      <input id="short" readonly>
+      <button id="copy" type="button">Copy</button>
+    </div>
+    <div class="muted" id="expiry"></div>
+  </div>
+
+  <div class="card">
+    <label for="statsCode">Look up stats for a short code</label>
+    <div class="row">
+      <input id="statsCode" placeholder="e.g. mylink">
+      <button id="statsBtn" type="button">Show</button>
+    </div>
+    <div id="stats"></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    $("form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      $("error").textContent = "";
+      $("submit").disabled = true;
+
+      const payload = { url: $("url").value };
+      if ($("alias").value) payload.alias = $("alias").value;
+      if ($("days").value) payload.expiresInDays = Number($("days").value);
+
+      try {
+        const res = await fetch("/api/shorten", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+
+        if (res.status === 429) {
+          $("error").textContent = `Too many requests. Try again in ${data.retryAfterSeconds}s.`;
+        } else if (res.status === 409) {
+          $("error").textContent = "That alias is already taken.";
+        } else if (!res.ok) {
+          $("error").textContent = data.error || "Something went wrong.";
+        } else {
+          $("short").value = data.shortUrl;
+          $("expiry").textContent = data.expiresAt
+            ? "Expires " + new Date(data.expiresAt).toLocaleString()
+            : "Does not expire";
+          $("result").hidden = false;
+          $("statsCode").value = data.shortCode;
+        }
+      } catch {
+        $("error").textContent = "Network error.";
+      } finally {
+        $("submit").disabled = false;
+      }
+    });
+
+    $("copy").addEventListener("click", async () => {
+      await navigator.clipboard.writeText($("short").value);
+      $("copy").textContent = "Copied";
+      setTimeout(() => ($("copy").textContent = "Copy"), 1200);
+    });
+
+    $("statsBtn").addEventListener("click", async () => {
+      const code = $("statsCode").value.trim();
+      const box = $("stats");
+      box.textContent = "";
+      if (!code) return;
+
+      const res = await fetch("/api/stats/" + encodeURIComponent(code));
+      if (!res.ok) { box.textContent = "Could not load stats."; return; }
+      const s = await res.json();
+
+      const total = document.createElement("p");
+      total.textContent = `Total clicks: ${s.totalClicks}`;
+      box.appendChild(total);
+
+      const max = Math.max(1, ...s.clicksPerDay.map((d) => d.clicks));
+      for (const d of s.clicksPerDay) {
+        const row = document.createElement("div");
+        row.className = "bar-row";
+        const label = document.createElement("span");
+        label.textContent = String(d.day).slice(0, 10);
+        const bar = document.createElement("div");
+        bar.className = "bar";
+        bar.style.width = (d.clicks / max) * 60 + "%";
+        const n = document.createElement("span");
+        n.textContent = d.clicks;
+        row.append(label, bar, n);
+        box.appendChild(row);
+      }
+
+      if (s.topReferrers.length) {
+        const h = document.createElement("p");
+        h.className = "muted";
+        h.textContent = "Top referrers: " + s.topReferrers.map((r) => `${r.referrer} (${r.clicks})`).join(", ");
+        box.appendChild(h);
+      }
+    });
+  </script>
+</body>
+</html>
